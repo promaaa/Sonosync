@@ -71,13 +71,14 @@
 3. Open Developer Tools (F12) > Application > Cookies.
 4. Copy the value of the `arl` cookie.
 5. Paste it into the Deezer Setup Wizard in SonoSync.
+*Note: Write access (creating playlists) on Deezer acts experimentally and may fail due to CSRF checks. Reading playlists works reliably.*
 
 ### YouTube Music
 1. Create a project in [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable **YouTube Data API v3**.
 3. Create OAuth Credentials (Web App).
-4. Add Redirect URI: `http://127.0.0.1:3000/api/auth/callback/google`.
-5. Add yourself to "Test Users" in the OAuth Consent Screen (or publish the app).
+4. Add Redirect URI: `http://127.0.0.1:3000/api/auth/callback/google` (AND `http://localhost:3000/api/auth/callback/google` to be safe).
+5. **Important**: Add yourself to "Test Users" in the OAuth Consent Screen AND/OR set the app status to "In Production" (Publish App) to bypass the "Access Blocked" error.
 
 ## 🤝 Contributing
 
@@ -85,4 +86,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE).
