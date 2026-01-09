@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="public/logo.png" alt="SonoSync Logo" width="200">
+  <img src="public/logo.png" alt="SonoSync Logo" width="500">
   <h1>SonoSync (Soundiiz, but open)</h1>
 </div>
 
