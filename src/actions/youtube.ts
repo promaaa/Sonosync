@@ -46,6 +46,36 @@ export async function getUserYouTubePlaylists(accessToken?: string): Promise<Pla
     }
 }
 
+export async function getYouTubePlaylistTracks(accessToken: string, playlistId: string): Promise<Track[]> {
+    try {
+        const youtube = await getYouTubeClient(accessToken);
+        
+        // Fetch all items (handling pagination if needed, but simplified to 50 for now)
+        // Max for playlistItems is 50.
+        const response = await youtube.playlistItems.list({
+            part: ["snippet", "contentDetails"],
+            playlistId: playlistId,
+            maxResults: 50
+        });
+
+        const items = response.data.items || [];
+
+        return items.map(item => ({
+            id: item.contentDetails?.videoId || "",
+            title: item.snippet?.title || "Unknown",
+            artist: item.snippet?.videoOwnerChannelTitle || "Unknown",
+            album: "YouTube",
+            image: item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.medium?.url || "",
+            duration: 0, // contentDetails here doesn't have duration. Would need video details.
+            uri: `youtube:video:${item.contentDetails?.videoId}`
+        }));
+
+    } catch (e) {
+        console.error("Failed to fetch YouTube playlist tracks", e);
+        throw e;
+    }
+}
+
 export async function createYouTubePlaylist(accessToken: string, name: string, description: string = ""): Promise<string> {
     try {
         const youtube = await getYouTubeClient(accessToken);

@@ -34,7 +34,17 @@ export function TransferFlow() {
             // Pass spotifyToken if available (Client-Side Auth)
             const token = spotifyToken || undefined;
             const arl = deezerArl || undefined;
-            const result = await transferPlaylist(selectedPlaylist.id, destinationPlatform, token, arl);
+            
+            if (!sourcePlatform) throw new Error("Source platform not selected");
+
+            const result = await transferPlaylist(
+                selectedPlaylist.id,
+                sourcePlatform,
+                destinationPlatform,
+                selectedPlaylist.name,
+                token,
+                arl
+            );
 
             setStatus("done");
             console.log("Transfer result:", result);

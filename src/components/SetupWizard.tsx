@@ -12,7 +12,7 @@ interface SetupWizardProps {
     onSuccess: () => void;
 }
 
-const INSTRUCTIONS: Record<string, { title: string, steps: string[], links: { label: string, url: string }[] }> = {
+const INSTRUCTIONS: Record<string, { title: string, steps: string[], links: { label: string, url: string }[], warnings?: string[] }> = {
     spotify: {
         title: "Spotify Setup",
         steps: [
@@ -20,49 +20,70 @@ const INSTRUCTIONS: Record<string, { title: string, steps: string[], links: { la
             "Click 'Create App' and give it a name.",
             "Select 'Web API' when asked which API/SDKs to use.",
             "In Settings, set Redirect URI to: http://127.0.0.1:3000/api/auth/callback/spotify",
-            "IMPORTANT: Spotify no longer accepts 'localhost'. You MUST use 127.0.0.1.",
+            "Also add: http://127.0.0.1:3000/callback (for PKCE flow)",
             "Copy the Client ID and Client Secret below.",
-            "NOTE: Access this site via http://127.0.0.1:3000 for the login to work."
+        ],
+        warnings: [
+            "Spotify no longer accepts 'localhost'. You MUST use 127.0.0.1.",
+            "After saving, access this site via http://127.0.0.1:3000"
         ],
         links: [{ label: "Open Spotify Dashboard", url: "https://developer.spotify.com/dashboard" }]
     },
     deezer: {
-        title: "Deezer Setup (Manual)",
+        title: "Deezer Setup (ARL Cookie Method)",
         steps: [
-            "Since Deezer closed their API to new apps, we use the 'ARL Cookie' method.",
+            "Deezer closed their API to new applications.",
+            "Instead, we use the 'ARL Cookie' method for authentication.",
             "Open Deezer.com in a new tab and log in.",
-            "Open Developer Tools (F12) > Application > Cookies > www.deezer.com.",
-            "Find the cookie named 'arl' and copy its value (it's a long string).",
+            "Open Developer Tools (F12 or ⌘+Option+I on Mac).",
+            "Go to Application tab > Cookies > www.deezer.com.",
+            "Find the cookie named 'arl' and copy its full value.",
             "Paste the 'arl' value below."
+        ],
+        warnings: [
+            "ARL cookies expire periodically. You may need to refresh it.",
+            "Keep your ARL private - it provides full access to your account."
         ],
         links: [{ label: "Open Deezer", url: "https://www.deezer.com" }]
     },
     youtube: {
-        title: "YouTube Music Setup",
+        title: "YouTube Music Setup (Google OAuth)",
         steps: [
-            "Go to Google Cloud Console > APIs & Services > Credentials.",
-            "Create Credentials > OAuth Client ID (Web Application).",
-            "Add Redirect URI: http://127.0.0.1:3000/api/auth/callback/google",
-            "Copy Client ID and Client Secret.",
-            "IMPORTANT: Go to OAuth Consent Screen > Test Users and ADD YOUR EMAIL.",
-            "OR click 'Publish App' to bypass the 'Access Blocked' error."
+            "Step 1: Enable the YouTube Data API v3 (use link below).",
+            "Step 2: Go to 'APIs & Services' > 'Credentials'.",
+            "Step 3: Click 'Create Credentials' > 'OAuth Client ID'.",
+            "Step 4: Select 'Web Application' as Application Type.",
+            "Step 5: Add this Redirect URI: http://127.0.0.1:3000/api/auth/callback/google",
+            "Step 6: Copy the Client ID and Client Secret below.",
+            "Step 7: Go to 'OAuth Consent Screen' > 'Test Users' and ADD YOUR EMAIL.",
+        ],
+        warnings: [
+            "If you see 'Access Blocked': add your email as a Test User, OR publish the app.",
+            "The API must be enabled BEFORE creating credentials.",
+            "Make sure the redirect URI EXACTLY matches (127.0.0.1, not localhost)."
         ],
         links: [
-            { label: "Open Google Credentials", url: "https://console.cloud.google.com/apis/credentials" },
-            { label: "Enable YouTube API", url: "https://console.cloud.google.com/apis/library/youtube.googleapis.com" }
+            { label: "1. Enable YouTube API", url: "https://console.cloud.google.com/apis/library/youtube.googleapis.com" },
+            { label: "2. Create Credentials", url: "https://console.cloud.google.com/apis/credentials" },
+            { label: "3. OAuth Consent Screen", url: "https://console.cloud.google.com/apis/credentials/consent" }
         ]
     },
     apple: {
-        title: "Apple Music Setup",
+        title: "Apple Music Setup (Coming Soon)",
         steps: [
-            "Requires Apple Developer Account ($99/yr).",
-            "Go to Identifiers, create a Media ID, and enable MusicKit.",
-            "Go to Keys, create a Key with MusicKit access.",
-            "This feature requires a paid account to generate valid secrets."
+            "Apple Music integration requires an Apple Developer Account ($99/year).",
+            "This feature is currently in development.",
+            "When ready, you'll need to:",
+            "• Create a Media Identifier (MusicKit ID)",
+            "• Create a Private Key for MusicKit",
+            "• Generate a JWT token for API authentication"
+        ],
+        warnings: [
+            "Full Apple Music support coming in a future update."
         ],
         links: [
-            { label: "Manage Identifiers", url: "https://developer.apple.com/account/resources/identifiers/list" },
-            { label: "Manage Keys", url: "https://developer.apple.com/account/resources/authkeys/list" }
+            { label: "Apple Developer Portal", url: "https://developer.apple.com/account/resources/identifiers/list" },
+            { label: "MusicKit Documentation", url: "https://developer.apple.com/documentation/musickitjs" }
         ]
     }
 };
@@ -129,19 +150,34 @@ export function SetupWizard({ platform, isOpen, onClose, onSuccess }: SetupWizar
                     </div>
                 </div>
 
-                <div className="space-y-4 mb-6 text-sm text-muted-foreground bg-secondary/20 p-4 rounded-lg">
-                    <ol className="list-decimal list-inside space-y-1">
+                <div className="space-y-4 mb-6 text-sm text-muted-foreground bg-secondary/20 p-4 rounded-lg max-h-64 overflow-y-auto">
+                    <ol className="list-decimal list-inside space-y-1.5">
                         {config.steps.map((step, i) => (
-                            <li key={i}>{step}</li>
+                            <li key={i} className="leading-relaxed">{step}</li>
                         ))}
                     </ol>
-                    <div className="pt-2">
+                    <div className="pt-3 flex flex-wrap gap-2">
                         {config.links.map(link => (
-                            <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-medium">
-                                {link.label} &rarr;
+                            <a key={link.url} href={link.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center text-primary hover:underline font-medium text-xs bg-primary/10 px-2 py-1 rounded">
+                                {link.label} →
                             </a>
                         ))}
                     </div>
+                    {config.warnings && config.warnings.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-yellow-500/20 bg-yellow-500/5 -mx-4 -mb-4 px-4 py-3 rounded-b-lg">
+                            <p className="text-yellow-500 text-xs font-semibold mb-2 flex items-center gap-1">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                Important Notes
+                            </p>
+                            <ul className="space-y-1">
+                                {config.warnings.map((warning, i) => (
+                                    <li key={i} className="text-yellow-500/90 text-xs">• {warning}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
                 </div>
 
                 <div className="space-y-4">

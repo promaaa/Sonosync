@@ -3,54 +3,122 @@
 import { auth } from "@/lib/auth";
 import { SpotifyProvider } from "@/lib/providers/SpotifyProvider";
 import { matchTracks } from "@/lib/matcher";
-import { Playlist, Platform } from "@/lib/types";
+import { Playlist, Platform, Track } from "@/lib/types";
 
-import { createDeezerPlaylist, searchDeezerTrack, addTracksToDeezerPlaylist } from "./deezer";
-import { createYouTubePlaylist, searchYouTubeTrack, addTracksToYouTubePlaylist } from "./youtube";
+import { createDeezerPlaylist, searchDeezerTrack, addTracksToDeezerPlaylist, getDeezerPlaylistTracks } from "./deezer";
+import { createYouTubePlaylist, searchYouTubeTrack, addTracksToYouTubePlaylist, getYouTubePlaylistTracks } from "./youtube";
+
+// Extended session type for multi-provider support
+interface ProviderTokens {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt?: number;
+}
+
+interface ExtendedSession {
+    accessToken?: string;
+    provider?: string;
+    providerTokens?: Record<string, ProviderTokens>;
+}
+
+// Helper to get the appropriate token for a platform
+function getTokenForPlatform(
+    platform: Platform,
+    session: ExtendedSession | null,
+    clientSpotifyToken?: string
+): string | null {
+    // Client-side PKCE token for Spotify takes priority
+    if (platform === 'spotify' && clientSpotifyToken) {
+        return clientSpotifyToken;
+    }
+
+    // Check multi-provider tokens first (new system)
+    if (session?.providerTokens) {
+        if (platform === 'spotify' && session.providerTokens.spotify?.accessToken) {
+            return session.providerTokens.spotify.accessToken;
+        }
+        if (platform === 'youtube' && session.providerTokens.google?.accessToken) {
+            return session.providerTokens.google.accessToken;
+        }
+        if (platform === 'deezer' && session.providerTokens.deezer?.accessToken) {
+            return session.providerTokens.deezer.accessToken;
+        }
+        if (platform === 'apple' && session.providerTokens.apple?.accessToken) {
+            return session.providerTokens.apple.accessToken;
+        }
+    }
+
+    // Fallback to legacy single-provider session
+    if (session?.accessToken) {
+        if (platform === 'spotify' && session.provider === 'spotify') {
+            return session.accessToken;
+        }
+        if (platform === 'youtube' && (session.provider === 'google' || session.provider === 'youtube')) {
+            return session.accessToken;
+        }
+        if (platform === 'deezer' && session.provider === 'deezer') {
+            return session.accessToken;
+        }
+    }
+
+    return null;
+}
 
 export async function transferPlaylist(
     sourcePlaylistId: string,
+    sourcePlatform: Platform,
     destinationPlatform: Platform,
+    playlistName: string,
     accessToken?: string,
     deezerArl?: string
 ) {
-    const session = await auth();
-    // Prioritize passed token (Client PKCE), then Session Token (NextAuth)
-    const token = accessToken || session?.accessToken;
+    const session = await auth() as ExtendedSession | null;
 
-    if (!token && !deezerArl) {
-        throw new Error("Not authenticated");
+    // Get tokens for both source and destination platforms
+    const sourceToken = getTokenForPlatform(sourcePlatform, session, accessToken);
+    const destToken = getTokenForPlatform(destinationPlatform, session, accessToken);
+
+    let tracks: Track[] = [];
+
+    // 1. Fetch Source Tracks
+    if (sourcePlatform === 'spotify') {
+        if (!sourceToken) throw new Error("Missing Spotify Access Token for Source. Please connect Spotify first.");
+
+        const sourceProvider = new SpotifyProvider(sourceToken);
+        tracks = await sourceProvider.getPlaylistTracks(sourcePlaylistId);
+
+    } else if (sourcePlatform === 'deezer') {
+        if (!deezerArl) throw new Error("Missing Deezer ARL for Source. Please configure Deezer (ARL cookie method).");
+        tracks = await getDeezerPlaylistTracks(deezerArl, sourcePlaylistId);
+
+    } else if (sourcePlatform === 'youtube') {
+        if (!sourceToken) throw new Error("Missing Google Access Token for Source. Please sign in with Google.");
+
+        tracks = await getYouTubePlaylistTracks(sourceToken, sourcePlaylistId);
+    } else {
+        throw new Error(`Source Platform ${sourcePlatform} not supported yet.`);
     }
 
-    // Source Provider (Assuming Spotify for now as Source based on token presence)
-    if (!token) throw new Error("Source Spotify token missing");
-    const sourceProvider = new SpotifyProvider(token as string);
-
-    // 1. Get Source Tracks
-    const tracks = await sourceProvider.getPlaylistTracks(sourcePlaylistId);
-    const sourcePlaylist = (await sourceProvider.getUserPlaylists()).find(p => p.id === sourcePlaylistId);
-    const playlistName = sourcePlaylist?.name || "Transferred Playlist";
+    console.log(`[Transfer] Fetched ${tracks.length} tracks from ${sourcePlatform}`);
 
     // 2. Destination Logic
     if (destinationPlatform === 'deezer') {
-        if (!deezerArl) throw new Error("Deezer ARL missing for destination");
-
-        // Match Tracks on Deezer
-        // We need an ad-hoc provider-like object or just use the matcher with a custom search fn
-        // The matcher expects a MusicProvider interface. 
-        // Let's manually match for now or create a mini-adapter.
+        if (!deezerArl) throw new Error("Deezer ARL missing for destination. Please configure Deezer (ARL cookie method).");
 
         const matchedIds: string[] = [];
         for (const track of tracks) {
-            // Try to search
-            // 1. Try ISRC
-            // 2. Try Title + Artist
             let found = null;
+            // Try ISRC first (most accurate)
             if (track.isrc) {
                 found = await searchDeezerTrack(deezerArl, `isrc:${track.isrc}`);
             }
+            // Fallback to artist + title search
             if (!found) {
                 found = await searchDeezerTrack(deezerArl, `artist:"${track.artist}" track:"${track.title}"`);
+            }
+            // Simpler fallback
+            if (!found) {
+                found = await searchDeezerTrack(deezerArl, `${track.artist} ${track.title}`);
             }
 
             if (found) {
@@ -58,12 +126,11 @@ export async function transferPlaylist(
             }
         }
 
-        // Create Playlist
+        console.log(`[Transfer] Matched ${matchedIds.length}/${tracks.length} tracks for Deezer`);
+
         const newId = await createDeezerPlaylist(deezerArl, `${playlistName} (Transfer)`, "Transferred via SonoSync");
 
-        // Add Tracks
         if (matchedIds.length > 0) {
-            // Add in batches of 50 just in case
             const chunkSize = 50;
             for (let i = 0; i < matchedIds.length; i += chunkSize) {
                 const chunk = matchedIds.slice(i, i + chunkSize);
@@ -74,65 +141,56 @@ export async function transferPlaylist(
         return { success: true, newPlaylistId: newId, matchCount: matchedIds.length, total: tracks.length };
 
     } else if (destinationPlatform === 'youtube') {
-        // For YouTube, we rely on the Server Session (NextAuth) having the Google access token
-        // Ensure the session is actually for Google? Or check if session token works for youtube?
-        // Right now our auth logic puts 'access_token' in session.accessToken.
-        // If the user logged in with Spotify, this token is Spotify's.
-        // If they logged in with Google, it matches.
-        // MULTI-PROVIDER ISSUE: We need to handle having BOTH tokens.
-        // Currently architecture assumes one 'session'.
-        // If source is Spotify (PKCE), we have 'token'. 
-        // If destination is Google, we need Google Token.
-        // We probably need to check `session.provider === 'google'` to get the google token.
-
-        let youtubeToken = "";
-        if (session?.provider === 'google' || session?.provider === 'youtube') {
-            youtubeToken = session.accessToken as string;
-        }
-
-        if (!youtubeToken) {
+        if (!destToken) {
             throw new Error("Not authenticated with YouTube/Google. Please sign in with Google.");
         }
 
         const matchedIds: string[] = [];
         for (const track of tracks) {
-            // Search YouTube for "Artist - Title"
             const query = `${track.artist} - ${track.title}`;
-            const found = await searchYouTubeTrack(youtubeToken, query);
+            const found = await searchYouTubeTrack(destToken, query);
 
             if (found) {
                 matchedIds.push(found.id);
             }
         }
 
-        const newId = await createYouTubePlaylist(youtubeToken, `${playlistName} (Transfer)`, "Transferred via SonoSync");
+        console.log(`[Transfer] Matched ${matchedIds.length}/${tracks.length} tracks for YouTube`);
+
+        const newId = await createYouTubePlaylist(destToken, `${playlistName} (Transfer)`, "Transferred via SonoSync");
 
         if (matchedIds.length > 0) {
-            await addTracksToYouTubePlaylist(youtubeToken, newId, matchedIds);
+            await addTracksToYouTubePlaylist(destToken, newId, matchedIds);
         }
 
         return { success: true, newPlaylistId: newId, matchCount: matchedIds.length, total: tracks.length };
 
     } else if (destinationPlatform === 'spotify') {
-        const destProvider = new SpotifyProvider(token as string); // Same account for now? Or different?
-        // If we want to support transferring TO the same spotify account (cloning), this works.
-        // If we want to transfer TO a different spotify account, we'd need a separate destination token.
-        // For now, assume same.
+        if (!destToken) throw new Error("Missing Spotify Access Token for Destination. Please connect Spotify first.");
+
+        const destProvider = new SpotifyProvider(destToken);
 
         const matches = await matchTracks(tracks, destProvider);
         const idsToAdd = matches.filter(m => m.destination).map(m => m.destination!.id);
 
+        console.log(`[Transfer] Matched ${idsToAdd.length}/${tracks.length} tracks for Spotify`);
+
         const newPlaylistId = await destProvider.createPlaylist(
             `${playlistName} (Transfer)`,
-            `Transferred from Spotify via SonoSync.`
+            `Transferred from ${sourcePlatform} via SonoSync.`
         );
 
         if (idsToAdd.length > 0) {
             await destProvider.addTracksToPlaylist(newPlaylistId, idsToAdd);
         }
 
-        return { success: true, newPlaylistId, matchCount: idsToAdd.length, total: tracks.length };
+        return { success: true, newPlaylistId: newPlaylistId, matchCount: idsToAdd.length, total: tracks.length };
+
+    } else if (destinationPlatform === 'apple') {
+        throw new Error("Apple Music transfer is not yet implemented. Please check back soon!");
+
     } else {
         throw new Error(`Provider ${destinationPlatform} not implemented yet.`);
     }
 }
+

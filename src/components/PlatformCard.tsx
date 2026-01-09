@@ -3,13 +3,26 @@
 import { Platform } from "@/lib/types";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { cn } from "@/lib/utils";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Icons } from "@/components/Icons";
 import { useMusicStore } from "@/store/useMusicStore";
 import { loadAccessToken, initiateSpotifyAuth, logoutSpotify } from "@/lib/spotify-pkce";
 
 import { getProviderStatus } from "@/actions/config";
 import { SetupWizard } from "@/components/SetupWizard";
+
+// Extended session type for multi-provider support
+interface ProviderTokens {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt?: number;
+}
+
+interface ExtendedSession {
+    accessToken?: string;
+    provider?: string;
+    providerTokens?: Record<string, ProviderTokens>;
+}
 
 interface PlatformCardProps {
     platform: Platform;
@@ -19,6 +32,7 @@ interface PlatformCardProps {
 
 export function PlatformCard({ platform, name, color }: PlatformCardProps) {
     const { data: session } = useSession();
+    const extSession = session as ExtendedSession | null;
     const { spotifyToken, setSpotifyToken, deezerArl, setDeezerArl } = useMusicStore();
     const [loading, setLoading] = useState(false);
     const [showSetup, setShowSetup] = useState(false);
@@ -41,10 +55,28 @@ export function PlatformCard({ platform, name, color }: PlatformCardProps) {
         }
     }, [platform, setSpotifyToken, spotifyToken, setDeezerArl, deezerArl]);
 
-    // Check next-auth session provider or custom spotify/deezer token
-    const isConnected = (platform === 'spotify' && !!spotifyToken) ||
-        (platform === 'deezer' && !!deezerArl) ||
-        (session?.provider === platform || (platform === 'youtube' && session?.provider === 'google'));
+    // Check connection status using multi-provider tokens
+    const isConnected = useMemo(() => {
+        // Check for PKCE Spotify token (client-side)
+        if (platform === 'spotify' && spotifyToken) return true;
+
+        // Check for Deezer ARL
+        if (platform === 'deezer' && deezerArl) return true;
+
+        // Check for multi-provider tokens (new system)
+        if (extSession?.providerTokens) {
+            if (platform === 'spotify' && extSession.providerTokens.spotify?.accessToken) return true;
+            if (platform === 'youtube' && extSession.providerTokens.google?.accessToken) return true;
+            if (platform === 'deezer' && extSession.providerTokens.deezer?.accessToken) return true;
+            if (platform === 'apple' && extSession.providerTokens.apple?.accessToken) return true;
+        }
+
+        // Legacy: Check for single provider session
+        if (extSession?.provider === platform) return true;
+        if (platform === 'youtube' && extSession?.provider === 'google') return true;
+
+        return false;
+    }, [platform, spotifyToken, deezerArl, extSession]);
 
     // Map platform to icon key
     const Icon = Icons[platform as keyof typeof Icons] || Icons.google;
@@ -70,17 +102,6 @@ export function PlatformCard({ platform, name, color }: PlatformCardProps) {
     const handleAction = async () => {
         // For Spotify and Deezer, we use custom flows
         if (platform === 'spotify') {
-
-            // Spotify requires 127.0.0.1 for redirect URI, so we must be on that domain
-            // to share localStorage (verifier).
-            if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
-                // Redirect to 127.0.0.1 (keeping port and path) and let them click again
-                const url = new URL(window.location.href);
-                url.hostname = '127.0.0.1';
-                window.location.href = url.toString();
-                return;
-            }
-
             try {
                 if (isConnected) {
                     logoutSpotify();
@@ -90,7 +111,6 @@ export function PlatformCard({ platform, name, color }: PlatformCardProps) {
                 }
             } catch (e) {
                 console.error("Spotify Auth Action Failed", e);
-                // In case of error (like popup blocked or network), make sure we reset state if needed
             }
             return;
         }

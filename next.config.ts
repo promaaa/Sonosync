@@ -14,11 +14,6 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'image-cdn-fa.spotifycdn.com' }, // Even more Spotify images
     ],
   },
-  experimental: {
-    // allow 127.0.0.1 for spotify redirect flow compatibility
-    // @ts-ignore
-    allowedDevOrigins: ["localhost:3000", "127.0.0.1:3000", "localhost:3001", "127.0.0.1:3001"],
-  },
 };
 
 export default nextConfig;
